@@ -4,53 +4,54 @@
 #include <math.h>
 
 #define HEADER_SIZE 138
+#define BLOCK_SIZE 16
 
 typedef unsigned char BYTE;
 
-float3 add_float3(float3 A, float3 B) {
+__host__ __device__ float3 add_float3(float3 A, float3 B) {
     float3 C = {A.x + B.x, A.y + B.y, A.z + B.z};
     return C;
 }
 
-float3 sub_float3(float3 A, float3 B) {
+__host__ __device__ float3 sub_float3(float3 A, float3 B) {
     float3 C = {A.x - B.x, A.y - B.y, A.z - B.z};
     return C;
 }
 
-float dot_product(float3 v1, float3 v2) {
+__host__ __device__ float dot_product(float3 v1, float3 v2) {
     return v1.x*v2.x + v1.y*v2.y + v1.z*v2.z;
 }
 
 
 void saveImage(int width, int height, float3** image, bool gpu) {
-    char path[255] = "images/raytracing_cpu.bmp";
+    char path[255] = "images/raytracing_cpu.txt";
     FILE *file = NULL; 
-    file = fopen(path, "wb");
+    file = fopen(path, "w");
 
     // fwrite(g_info, sizeof(BYTE), HEADER_SIZE, file); TODO uncomment me
 
     for (int h = 0; h < height; h++) {
         for (int w = 0; w < width; w++) {
-            BYTE pixel_x = (BYTE)((image[h][w].x > 255.0f) ? 255.0f :
+            char pixel_x = (char)((image[h][w].x > 255.0f) ? 255.0f :
                                 (image[h][w].x < 0.0f)   ? 0.0f :
                                 image[h][w].x);
-            BYTE pixel_y = (BYTE)((image[h][w].y > 255.0f) ? 255.0f :
+            char pixel_y = (char)((image[h][w].y > 255.0f) ? 255.0f :
                                 (image[h][w].y < 0.0f)   ? 0.0f :
                                 image[h][w].y);
-            BYTE pixel_z = (BYTE)((image[h][w].z > 255.0f) ? 255.0f :
+            char pixel_z = (char)((image[h][w].z > 255.0f) ? 255.0f :
                                 (image[h][w].z < 0.0f)   ? 0.0f :
                                 image[h][w].z);
 
-        fputc(pixel_x, file); // TODO change me
-        fputc(pixel_y, file); // TODO change me
-        fputc(pixel_z, file); // TODO change me
+            fputc(pixel_x, file); // TODO change me
+            fputc(pixel_y, file); // TODO change me
+            fputc(pixel_z, file); // TODO change me
         }
     }
 
     fclose(file);
 }
 
-float3 normalize(float3 v) {
+__host__ __device__ float3 normalize(float3 v) {
     float norma = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
     v.x /= norma;
     v.y /= norma;
@@ -60,7 +61,7 @@ float3 normalize(float3 v) {
 
 /* Return the distance from O to the intersection of the ray (O, D) with the sphere (S, R) 
     O and S are 3D points, D (direction) is a normalised vector and R is a scalar */
-float intersect_sphere(float3 O, float3 D, float3 S, float R) {
+__host__ __device__ float intersect_sphere(float3 O, float3 D, float3 S, float R) {
     float a = dot_product(D, D);
     float3 OS = sub_float3(O, S);
     float b = 2 * dot_product(D, OS);
@@ -79,7 +80,7 @@ float intersect_sphere(float3 O, float3 D, float3 S, float R) {
 }
 
 /* Find first point of intersection with the scene, trace a ray and apply Bling-phon shading */
-float3 trace_ray(float3 O, float3 D, float3 position, float radius, float3 L, float ambient, 
+__host__ __device__ float3 trace_ray(float3 O, float3 D, float3 position, float radius, float3 L, float ambient, 
             float diffuse, float3 color, float specular_c, int specular_k, float3 color_light) {
     float t = intersect_sphere(O, D, position, radius);
     if (t == INFINITY) return (float3){INFINITY, INFINITY, INFINITY}; // means no intersection
@@ -133,6 +134,16 @@ float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position,
     return img;
 }
 
+__global__ void gpu_compute(int width, int height, float3 O, float3 Q, float3 position, float radius, float3 L, 
+            float ambient, float diffuse, float3 color, float specular_c, int specular_k, float3 color_light){
+    const int x = threadIdx.x + blockDim.x * blockIdx.x;
+    const int y = threadIdx.y + blockDim.y * blockIdx.y;
+
+    if (!(x >= 0 && x < width && y >= 0 && y < height)) return;
+
+    printf("X: %d\t Y: %d\n", x, y);
+}
+
 int main() {
     int width = 5, height = 5;
 
@@ -153,11 +164,29 @@ int main() {
     float3 O = {0., 0., -1.};
     float3 Q = {0., 0., 0.};
 
-    float3** img = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+    // compute in cpu
+    printf("Computing on CPU...\n\n");
+    float3** img_cpu = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+    
+    // compute in gpu
+    dim3 grid(((width  + (BLOCK_SIZE - 1)) / BLOCK_SIZE),
+                      ((height + (BLOCK_SIZE - 1)) / BLOCK_SIZE));                       
+    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+
+    printf("Computing on GPU...\n\n");
+    gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+    cudaDeviceSynchronize();
+    // float3 **img_gpu = (float3**)malloc(height * sizeof(float3*));
+    // for (int h = 0; h < height; h++) img_gpu[h] = (float3*)calloc(width, sizeof(float3));
+
+    // cudaMallocHost(&img_gpu, sizeof())
+
+    
+    // float3** img_gpu = gpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
 
     printf("Printing image...\n");
 
-    saveImage(width, height, img, false);
+    saveImage(width, height, img_cpu, false);
     printf("Done!\n");
     return 0;
 }
