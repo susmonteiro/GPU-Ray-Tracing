@@ -55,7 +55,6 @@ float3 normalize(float3 v) {
     v.x /= norma;
     v.y /= norma;
     v.z /= norma;
-    // printf("[%f, %f, %f]\n", v.x, v.y, v.z);
     return v;
 }
 
@@ -85,7 +84,9 @@ float3 trace_ray(float3 O, float3 D, float3 position, float radius, float3 L, fl
     float t = intersect_sphere(O, D, position, radius);
     if (t == INFINITY) return (float3){INFINITY, INFINITY, INFINITY}; // means no intersection
 
+
     float3 M = {O.x + D.x*t, O.y + D.y*t, O.z + D.z*t};
+
     float3 N = normalize(sub_float3(M, position));
     float3 toL = normalize(sub_float3(L, M));
     float3 toO = normalize(sub_float3(O, M));
@@ -97,7 +98,9 @@ float3 trace_ray(float3 O, float3 D, float3 position, float radius, float3 L, fl
     col.z = ambient + diffuse * d_prod * color.z;
 
     d_prod = max(dot_product(N, normalize(add_float3(toL, toO))), 0.);
-    col.x = specular_c * color_light.x * pow(d_prod, specular_k);
+    col.x += specular_c * color_light.x * pow(d_prod, specular_k);
+    col.y += specular_c * color_light.y * pow(d_prod, specular_k);
+    col.z += specular_c * color_light.z * pow(d_prod, specular_k);
 
     return col;
 }
@@ -107,12 +110,11 @@ float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position,
     float3 **img = (float3**)malloc(height * sizeof(float3*));
     for (int h = 0; h < height; h++) img[h] = (float3*)calloc(width, sizeof(float3));
 
-    double step = 2. / width;
+    double step = 2. / (width - 1);
     int counterWidth = 0;
     int counterHeight = 0;
     for (double w = -1.; w < 1.005; w += step) {
-        counterWidth++;
-        counterHeight = 0;
+        counterHeight = -1;
         for (double h = -1.; h < 1.005; h += step) {
             counterHeight++;
             Q.x = w, Q.y = h;
@@ -126,13 +128,13 @@ float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position,
 
             img[height - counterHeight - 1][counterWidth] = col;
         }
+        counterWidth++;
     }
     return img;
 }
 
 int main() {
     int width = 5, height = 5;
-    printf("> Image details:\tWidth: %d\tHeight: %d\n", width, height);
 
     // sphere properties
     float3 position = {0., 0., 1.};
@@ -153,16 +155,9 @@ int main() {
 
     float3** img = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
 
-    // printf("Matrix size: %ld\n", sizeof(float3));
-
-    for (int w = 0; w < width; w++) {
-        for (int h = 0; h < height; h++) {
-            if (img[w][h].x != 0 && img[w][h].y != 0 && img[w][h].z != 0) printf("[%f, %f, %f]\n", img[w][h].x, img[w][h].y, img[w][h].z);
-        }
-    }
-
+    printf("Printing image...\n");
 
     saveImage(width, height, img, false);
-    // printf("DONE\n");
+    printf("Done!\n");
     return 0;
 }
