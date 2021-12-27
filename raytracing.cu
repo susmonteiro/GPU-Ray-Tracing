@@ -107,11 +107,10 @@ __host__ __device__ float3 trace_ray(float3 O, float3 D, float3 position, float 
 }
 
 float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position, float radius, float3 L, 
-            float ambient, float diffuse, float3 color, float specular_c, int specular_k, float3 color_light) {
+            float ambient, float diffuse, float3 color, float specular_c, int specular_k, float3 color_light, double step) {
     float3 **img = (float3**)malloc(height * sizeof(float3*));
     for (int h = 0; h < height; h++) img[h] = (float3*)calloc(width, sizeof(float3));
 
-    double step = 2. / (width - 1);
     int counterWidth = 0;
     int counterHeight = 0;
     for (double w = -1.; w < 1.005; w += step) {
@@ -119,6 +118,7 @@ float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position,
         for (double h = -1.; h < 1.005; h += step) {
             counterHeight++;
             Q.x = w, Q.y = h;
+
             float3 D = normalize(sub_float3(Q, O));
             float3 col = trace_ray(O, D, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
             if (col.x == INFINITY) continue;
@@ -135,17 +135,31 @@ float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position,
 }
 
 __global__ void gpu_compute(int width, int height, float3 O, float3 Q, float3 position, float radius, float3 L, 
-            float ambient, float diffuse, float3 color, float specular_c, int specular_k, float3 color_light){
+            float ambient, float diffuse, float3 color, float specular_c, int specular_k, float3 color_light, 
+            double step, float3 **img) {
     const int x = threadIdx.x + blockDim.x * blockIdx.x;
     const int y = threadIdx.y + blockDim.y * blockIdx.y;
 
     if (!(x >= 0 && x < width && y >= 0 && y < height)) return;
 
-    printf("X: %d\t Y: %d\n", x, y);
+    Q.x = -1 + x*step, Q.y = -1+y*step;
+    float3 D = normalize(sub_float3(Q, O));
+    float3 col = trace_ray(O, D, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+
+    if (col.x == INFINITY) { 
+        col.x = 0, col.y = 0, col.z = 0;
+    } else {
+        col.x = col.x > 1 ? 1 : col.x < 0 ? 0 : col.x; 
+        col.y = col.y > 1 ? 1 : col.y < 0 ? 0 : col.y; 
+        col.z = col.z > 1 ? 1 : col.z < 0 ? 0 : col.z; 
+
+    }
+
+    img[height - y - 1][x] = col;
 }
 
 int main() {
-    int width = 5, height = 5;
+    int width = 400, height = 400;
 
     // sphere properties
     float3 position = {0., 0., 1.};
@@ -164,29 +178,79 @@ int main() {
     float3 O = {0., 0., -1.};
     float3 Q = {0., 0., 0.};
 
+    double step = 2. / (width - 1);
+
     // compute in cpu
     printf("Computing on CPU...\n\n");
-    float3** img_cpu = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+    float3** img_cpu = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step);
     
     // compute in gpu
     dim3 grid(((width  + (BLOCK_SIZE - 1)) / BLOCK_SIZE),
                       ((height + (BLOCK_SIZE - 1)) / BLOCK_SIZE));                       
     dim3 block(BLOCK_SIZE, BLOCK_SIZE);
 
-    printf("Computing on GPU...\n\n");
-    gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+    float3 **devicePointersStoredInDeviceMemory;
+    cudaMalloc((void**)&devicePointersStoredInDeviceMemory, height * sizeof(float3*));
+
+    float3* devicePointersStoredInHostMemory[height];
+    for(int i=0; i<height; i++)
+        cudaMalloc( (void**)&devicePointersStoredInHostMemory[i], width*sizeof(float3));
+
+    cudaMemcpy(
+        devicePointersStoredInDeviceMemory, 
+        devicePointersStoredInHostMemory,
+        sizeof(float3*)*height, cudaMemcpyHostToDevice);
+
+    gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step, devicePointersStoredInDeviceMemory);
     cudaDeviceSynchronize();
-    // float3 **img_gpu = (float3**)malloc(height * sizeof(float3*));
-    // for (int h = 0; h < height; h++) img_gpu[h] = (float3*)calloc(width, sizeof(float3));
 
-    // cudaMallocHost(&img_gpu, sizeof())
+    float3** hostPointersStoredInHostMemory = (float3**)malloc(height*sizeof(float3*));
+    for(int i=0; i<height; i++) {
+        float3* hostPointer = hostPointersStoredInHostMemory[i]; 
+        hostPointer = (float3*)malloc(width*sizeof(float3)); 
 
-    
-    // float3** img_gpu = gpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+        float3* devicePointer = devicePointersStoredInHostMemory[i];
+
+        cudaMemcpy(hostPointer, devicePointer, sizeof(float3)*width, cudaMemcpyDeviceToHost);
+        hostPointersStoredInHostMemory[i] = hostPointer;
+    }
+
+    printf("Computing on GPU...\n\n");
+
+/*     float3 **img_gpu = (float3**)malloc(height * sizeof(float3*));
+    float3 **img_gpu_d = (float3**)malloc(height * sizeof(float3*));
+
+    for (int h = 0; h < height; h++) {
+        cudaMalloc(&img_gpu_d[h], width * sizeof(float3));
+        img_gpu[h] = (float3*)malloc(width * sizeof(float3));
+    }
+
+    cudaMalloc(&img_gpu_d, height * sizeof(float3*));
+
+
+    // cudaMemcpy(img_gpu, img_gpu_d, height*sizeof(float3*), cudaMemcpyDeviceToHost);
+    for (int h = 0; h < height; h++) cudaMemcpy(img_gpu[h], img_gpu_d[h], width*sizeof(float3), cudaMemcpyDeviceToHost);
+ */
+
+    int cnt = 0;
+    for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+            if (abs(img_cpu[h][w].x - hostPointersStoredInHostMemory[h][w].x) < 0.0001 &&
+                abs(img_cpu[h][w].y - hostPointersStoredInHostMemory[h][w].y) < 0.0001 &&
+                abs(img_cpu[h][w].z - hostPointersStoredInHostMemory[h][w].z) < 0.0001)
+                    ++cnt;
+            // printf("CPU:\t%f\t%f\t%f\n", img_cpu[h][w].x, img_cpu[h][w].y, img_cpu[h][w].z);
+            // printf("GPU:\t%f\t%f\t%f\n\n", hostPointersStoredInHostMemory[h][w].x, hostPointersStoredInHostMemory[h][w].y, hostPointersStoredInHostMemory[h][w].z);
+        }
+    }
+
+    if (cnt == height*width) printf("Comparing the output for each implementation... Correct!\n"); 
+    else printf("Comparing the output for each implementation... Incorrect :(\n");
+
 
     printf("Printing image...\n");
 
-    saveImage(width, height, img_cpu, false);
+    // saveImage(width, height, img_cpu, false);
     printf("Done!\n");
     return 0;
 }
