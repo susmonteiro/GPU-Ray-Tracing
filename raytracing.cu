@@ -2,11 +2,18 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <sys/time.h>
 
 #define HEADER_SIZE 138
 #define BLOCK_SIZE 16
 
 typedef unsigned char BYTE;
+
+double cpuSecond() {
+    struct timeval tp;
+    gettimeofday(&tp, NULL);
+    return ((double)tp.tv_sec + (double)tp.tv_usec*1.e-6);
+}
 
 __host__ __device__ float3 add_float3(float3 A, float3 B) {
     float3 C = {A.x + B.x, A.y + B.y, A.z + B.z};
@@ -42,9 +49,9 @@ void saveImage(int width, int height, float3** image, bool gpu) {
                                 (image[h][w].z < 0.0f)   ? 0.0f :
                                 image[h][w].z);
 
-            fputc(pixel_x, file); // TODO change me
-            fputc(pixel_y, file); // TODO change me
-            fputc(pixel_z, file); // TODO change me
+            fputc(pixel_x, file); 
+            fputc(pixel_y, file);
+            fputc(pixel_z, file);
         }
     }
 
@@ -181,10 +188,17 @@ int main() {
     double step = 2. / (width - 1);
 
     // compute in cpu
-    printf("Computing on CPU...\n\n");
+    double iStart = cpuSecond();
+
+    printf("Computing on CPU...\n");
     float3** img_cpu = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step);
     
+    double iCPUElaps = cpuSecond() - iStart;
+    printf("Time elapsed CPU: %f\n\n", iCPUElaps);
+
     // compute in gpu
+    double iStartMem = cpuSecond();
+
     dim3 grid(((width  + (BLOCK_SIZE - 1)) / BLOCK_SIZE),
                       ((height + (BLOCK_SIZE - 1)) / BLOCK_SIZE));                       
     dim3 block(BLOCK_SIZE, BLOCK_SIZE);
@@ -201,8 +215,13 @@ int main() {
         img_gpu_host,
         sizeof(float3*)*height, cudaMemcpyHostToDevice);
 
+    iStart = cpuSecond();
+
+    printf("Computing on GPU...\n");
     gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step, d_img_gpu);
     cudaDeviceSynchronize();
+
+    double iGPUElaps = cpuSecond() - iStart;
 
     float3** img_gpu = (float3**)malloc(height*sizeof(float3*));
     for(int i=0; i<height; i++) {
@@ -215,7 +234,11 @@ int main() {
         img_gpu[i] = hostPointer;
     }
 
-    printf("Computing on GPU...\n\n");
+    double iGPUMemElaps = cpuSecond() - iStartMem;
+
+    printf("Time elapsed GPU (not counting data transfer time): %f\n", iGPUElaps);
+    printf("Time elapsed GPU (counting data transfer time):     %f\n\n", iGPUMemElaps);
+
 
     int cnt = 0;
     for (int h = 0; h < height; h++) {
