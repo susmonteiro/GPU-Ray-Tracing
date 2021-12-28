@@ -89,7 +89,6 @@ unsigned char* createBitmapInfoHeader (int height, int width)
 void saveImage(int width, int height, float3** image, char filename[256]) {
     int widthInBytes = width * BYTES_PER_PIXEL;
 
-    unsigned char padding[3] = {0, 0, 0};
     int paddingSize = (4 - (widthInBytes) % 4) % 4;
 
     int stride = (widthInBytes) + paddingSize;
@@ -102,8 +101,8 @@ void saveImage(int width, int height, float3** image, char filename[256]) {
     unsigned char* infoHeader = createBitmapInfoHeader(height, width);
     fwrite(infoHeader, 1, INFO_HEADER_SIZE, file);
 
-        for (int w = 0; w < width; w++) {
-    for (int h = height - 1; h > -1; h--) {
+    for (int w = 0; w < width; w++) {
+        for (int h = height - 1; h > -1; h--) {
             double3 pixel = {image[h][w].x * 255., image[h][w].y * 255., image[h][w].z * 255.};
             char pixel_x = (char)((pixel.x > 255.0f) ? 255.0f :
                                 (pixel.x < 0.0f)   ? 0.0f :
@@ -291,8 +290,7 @@ int main() {
 
     float3** img_gpu = (float3**)malloc(height*sizeof(float3*));
     for(int i=0; i<height; i++) {
-        float3* hostPointer = img_gpu[i]; 
-        hostPointer = (float3*)malloc(width*sizeof(float3)); 
+        float3* hostPointer = (float3*)malloc(width*sizeof(float3)); 
 
         float3* devicePointer = img_gpu_host[i];
 
@@ -329,5 +327,17 @@ int main() {
     saveImage(width, height, img_gpu, gpu_filename);
 
     printf("Done!\n");
+
+    cudaFree(d_img_gpu);
+    for(int i=0; i<height; i++)
+        cudaFree(img_gpu_host[i]);
+
+    for(int i=0; i<height; i++) free(img_gpu[i]); 
+    free(img_gpu);
+
+    for(int i=0; i<height; i++) free(img_cpu[i]); 
+    free(img_cpu);
+
+
     return 0;
 }
