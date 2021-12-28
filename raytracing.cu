@@ -10,8 +10,6 @@
 #define INFO_HEADER_SIZE 40
 #define BYTES_PER_PIXEL 3 // red, green, & blue
 
-
-
 typedef unsigned char BYTE;
 
 double cpuSecond() {
@@ -104,9 +102,9 @@ void saveImage(int width, int height, float3** image, char filename[256]) {
     unsigned char* infoHeader = createBitmapInfoHeader(height, width);
     fwrite(infoHeader, 1, INFO_HEADER_SIZE, file);
 
-    for (int h = 0; h < height; h++) {
         for (int w = 0; w < width; w++) {
-            double3 pixel = {image[h][w].x * 256., image[h][w].y * 256., image[h][w].z * 256.};
+    for (int h = height - 1; h > -1; h--) {
+            double3 pixel = {image[h][w].x * 255., image[h][w].y * 255., image[h][w].z * 255.};
             char pixel_x = (char)((pixel.x > 255.0f) ? 255.0f :
                                 (pixel.x < 0.0f)   ? 0.0f :
                                 pixel.x);
