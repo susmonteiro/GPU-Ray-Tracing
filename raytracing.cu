@@ -189,58 +189,41 @@ int main() {
                       ((height + (BLOCK_SIZE - 1)) / BLOCK_SIZE));                       
     dim3 block(BLOCK_SIZE, BLOCK_SIZE);
 
-    float3 **devicePointersStoredInDeviceMemory;
-    cudaMalloc((void**)&devicePointersStoredInDeviceMemory, height * sizeof(float3*));
+    float3 **d_img_gpu;
+    cudaMalloc((void**)&d_img_gpu, height * sizeof(float3*));
 
-    float3* devicePointersStoredInHostMemory[height];
+    float3* img_gpu_host[height];
     for(int i=0; i<height; i++)
-        cudaMalloc( (void**)&devicePointersStoredInHostMemory[i], width*sizeof(float3));
+        cudaMalloc( (void**)&img_gpu_host[i], width*sizeof(float3));
 
     cudaMemcpy(
-        devicePointersStoredInDeviceMemory, 
-        devicePointersStoredInHostMemory,
+        d_img_gpu, 
+        img_gpu_host,
         sizeof(float3*)*height, cudaMemcpyHostToDevice);
 
-    gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step, devicePointersStoredInDeviceMemory);
+    gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step, d_img_gpu);
     cudaDeviceSynchronize();
 
-    float3** hostPointersStoredInHostMemory = (float3**)malloc(height*sizeof(float3*));
+    float3** img_gpu = (float3**)malloc(height*sizeof(float3*));
     for(int i=0; i<height; i++) {
-        float3* hostPointer = hostPointersStoredInHostMemory[i]; 
+        float3* hostPointer = img_gpu[i]; 
         hostPointer = (float3*)malloc(width*sizeof(float3)); 
 
-        float3* devicePointer = devicePointersStoredInHostMemory[i];
+        float3* devicePointer = img_gpu_host[i];
 
         cudaMemcpy(hostPointer, devicePointer, sizeof(float3)*width, cudaMemcpyDeviceToHost);
-        hostPointersStoredInHostMemory[i] = hostPointer;
+        img_gpu[i] = hostPointer;
     }
 
     printf("Computing on GPU...\n\n");
 
-/*     float3 **img_gpu = (float3**)malloc(height * sizeof(float3*));
-    float3 **img_gpu_d = (float3**)malloc(height * sizeof(float3*));
-
-    for (int h = 0; h < height; h++) {
-        cudaMalloc(&img_gpu_d[h], width * sizeof(float3));
-        img_gpu[h] = (float3*)malloc(width * sizeof(float3));
-    }
-
-    cudaMalloc(&img_gpu_d, height * sizeof(float3*));
-
-
-    // cudaMemcpy(img_gpu, img_gpu_d, height*sizeof(float3*), cudaMemcpyDeviceToHost);
-    for (int h = 0; h < height; h++) cudaMemcpy(img_gpu[h], img_gpu_d[h], width*sizeof(float3), cudaMemcpyDeviceToHost);
- */
-
     int cnt = 0;
     for (int h = 0; h < height; h++) {
         for (int w = 0; w < width; w++) {
-            if (abs(img_cpu[h][w].x - hostPointersStoredInHostMemory[h][w].x) < 0.0001 &&
-                abs(img_cpu[h][w].y - hostPointersStoredInHostMemory[h][w].y) < 0.0001 &&
-                abs(img_cpu[h][w].z - hostPointersStoredInHostMemory[h][w].z) < 0.0001)
+            if (abs(img_cpu[h][w].x - img_gpu[h][w].x) < 0.0001 &&
+                abs(img_cpu[h][w].y - img_gpu[h][w].y) < 0.0001 &&
+                abs(img_cpu[h][w].z - img_gpu[h][w].z) < 0.0001)
                     ++cnt;
-            // printf("CPU:\t%f\t%f\t%f\n", img_cpu[h][w].x, img_cpu[h][w].y, img_cpu[h][w].z);
-            // printf("GPU:\t%f\t%f\t%f\n\n", hostPointersStoredInHostMemory[h][w].x, hostPointersStoredInHostMemory[h][w].y, hostPointersStoredInHostMemory[h][w].z);
         }
     }
 
