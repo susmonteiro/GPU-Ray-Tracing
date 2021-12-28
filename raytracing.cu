@@ -6,6 +6,11 @@
 
 #define HEADER_SIZE 138
 #define BLOCK_SIZE 16
+#define FILE_HEADER_SIZE 14
+#define INFO_HEADER_SIZE 40
+#define BYTES_PER_PIXEL 3 // red, green, & blue
+
+
 
 typedef unsigned char BYTE;
 
@@ -29,29 +34,92 @@ __host__ __device__ float dot_product(float3 v1, float3 v2) {
     return v1.x*v2.x + v1.y*v2.y + v1.z*v2.z;
 }
 
+unsigned char* createBitmapFileHeader (int height, int stride)
+{
+    int fileSize = FILE_HEADER_SIZE + INFO_HEADER_SIZE + (stride * height);
 
-void saveImage(int width, int height, float3** image, bool gpu) {
-    char path[255] = "images/raytracing_cpu.txt";
-    FILE *file = NULL; 
-    file = fopen(path, "w");
+    static unsigned char fileHeader[] = {
+        0,0,     /// signature
+        0,0,0,0, /// image file size in bytes
+        0,0,0,0, /// reserved
+        0,0,0,0, /// start of pixel array
+    };
 
-    // fwrite(g_info, sizeof(BYTE), HEADER_SIZE, file); TODO uncomment me
+    fileHeader[ 0] = (unsigned char)('B');
+    fileHeader[ 1] = (unsigned char)('M');
+    fileHeader[ 2] = (unsigned char)(fileSize      );
+    fileHeader[ 3] = (unsigned char)(fileSize >>  8);
+    fileHeader[ 4] = (unsigned char)(fileSize >> 16);
+    fileHeader[ 5] = (unsigned char)(fileSize >> 24);
+    fileHeader[10] = (unsigned char)(FILE_HEADER_SIZE + INFO_HEADER_SIZE);
+
+    return fileHeader;
+}
+
+unsigned char* createBitmapInfoHeader (int height, int width)
+{
+    static unsigned char infoHeader[] = {
+        0,0,0,0, /// header size
+        0,0,0,0, /// image width
+        0,0,0,0, /// image height
+        0,0,     /// number of color planes
+        0,0,     /// bits per pixel
+        0,0,0,0, /// compression
+        0,0,0,0, /// image size
+        0,0,0,0, /// horizontal resolution
+        0,0,0,0, /// vertical resolution
+        0,0,0,0, /// colors in color table
+        0,0,0,0, /// important color count
+    };
+
+    infoHeader[ 0] = (unsigned char)(INFO_HEADER_SIZE);
+    infoHeader[ 4] = (unsigned char)(width      );
+    infoHeader[ 5] = (unsigned char)(width >>  8);
+    infoHeader[ 6] = (unsigned char)(width >> 16);
+    infoHeader[ 7] = (unsigned char)(width >> 24);
+    infoHeader[ 8] = (unsigned char)(height      );
+    infoHeader[ 9] = (unsigned char)(height >>  8);
+    infoHeader[10] = (unsigned char)(height >> 16);
+    infoHeader[11] = (unsigned char)(height >> 24);
+    infoHeader[12] = (unsigned char)(1);
+    infoHeader[14] = (unsigned char)(BYTES_PER_PIXEL*8);
+
+    return infoHeader;
+}
+
+
+void saveImage(int width, int height, float3** image, char filename[256]) {
+    int widthInBytes = width * BYTES_PER_PIXEL;
+
+    unsigned char padding[3] = {0, 0, 0};
+    int paddingSize = (4 - (widthInBytes) % 4) % 4;
+
+    int stride = (widthInBytes) + paddingSize;
+
+    FILE* file = fopen(filename, "wb");
+
+    unsigned char* fileHeader = createBitmapFileHeader(height, stride);
+    fwrite(fileHeader, 1, FILE_HEADER_SIZE, file);
+
+    unsigned char* infoHeader = createBitmapInfoHeader(height, width);
+    fwrite(infoHeader, 1, INFO_HEADER_SIZE, file);
 
     for (int h = 0; h < height; h++) {
         for (int w = 0; w < width; w++) {
-            char pixel_x = (char)((image[h][w].x > 255.0f) ? 255.0f :
-                                (image[h][w].x < 0.0f)   ? 0.0f :
-                                image[h][w].x);
-            char pixel_y = (char)((image[h][w].y > 255.0f) ? 255.0f :
-                                (image[h][w].y < 0.0f)   ? 0.0f :
-                                image[h][w].y);
-            char pixel_z = (char)((image[h][w].z > 255.0f) ? 255.0f :
-                                (image[h][w].z < 0.0f)   ? 0.0f :
-                                image[h][w].z);
-
-            fputc(pixel_x, file); 
+            double3 pixel = {image[h][w].x * 256., image[h][w].y * 256., image[h][w].z * 256.};
+            char pixel_x = (char)((pixel.x > 255.0f) ? 255.0f :
+                                (pixel.x < 0.0f)   ? 0.0f :
+                                pixel.x);
+            char pixel_y = (char)((pixel.y > 255.0f) ? 255.0f :
+                                (pixel.y < 0.0f)   ? 0.0f :
+                                pixel.y);
+            char pixel_z = (char)((pixel.z > 255.0f) ? 255.0f :
+                                (pixel.z < 0.0f)   ? 0.0f :
+                                pixel.z);
+            
+            fputc(pixel_z, file); 
             fputc(pixel_y, file);
-            fputc(pixel_z, file);
+            fputc(pixel_x, file);
         }
     }
 
@@ -250,13 +318,18 @@ int main() {
         }
     }
 
-    if (cnt == height*width) printf("Comparing the output for each implementation... Correct!\n"); 
-    else printf("Comparing the output for each implementation... Incorrect :(\n");
+    if (cnt == height*width) printf("Comparing the output for each implementation... Correct!\n\n"); 
+    else printf("Comparing the output for each implementation... Incorrect :(\n\n");
 
 
     printf("Printing image...\n");
 
-    // saveImage(width, height, img_cpu, false);
+    char cpu_filename[256] = "images/raytracing_cpu.bmp";
+    char gpu_filename[256] = "images/raytracing_gpu.bmp";
+
+    saveImage(width, height, img_cpu, cpu_filename);
+    saveImage(width, height, img_gpu, gpu_filename);
+
     printf("Done!\n");
     return 0;
 }
