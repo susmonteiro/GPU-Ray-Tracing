@@ -4,8 +4,9 @@
 #include <math.h>
 #include <sys/time.h>
 
+#define BLOCK_SIZE 8
+
 #define HEADER_SIZE 138
-#define BLOCK_SIZE 16
 #define FILE_HEADER_SIZE 14
 #define INFO_HEADER_SIZE 40
 #define BYTES_PER_PIXEL 3 // red, green, & blue
@@ -86,7 +87,7 @@ unsigned char* createBitmapInfoHeader (int height, int width)
 }
 
 
-void saveImage(int width, int height, float3** image, char filename[256]) {
+void saveImageCPU(int width, int height, float3** image, char filename[256]) {
     int widthInBytes = width * BYTES_PER_PIXEL;
 
     int paddingSize = (4 - (widthInBytes) % 4) % 4;
@@ -104,6 +105,43 @@ void saveImage(int width, int height, float3** image, char filename[256]) {
     for (int w = 0; w < width; w++) {
         for (int h = height - 1; h > -1; h--) {
             double3 pixel = {image[h][w].x * 255., image[h][w].y * 255., image[h][w].z * 255.};
+            char pixel_x = (char)((pixel.x > 255.0f) ? 255.0f :
+                                (pixel.x < 0.0f)   ? 0.0f :
+                                pixel.x);
+            char pixel_y = (char)((pixel.y > 255.0f) ? 255.0f :
+                                (pixel.y < 0.0f)   ? 0.0f :
+                                pixel.y);
+            char pixel_z = (char)((pixel.z > 255.0f) ? 255.0f :
+                                (pixel.z < 0.0f)   ? 0.0f :
+                                pixel.z);
+            
+            fputc(pixel_z, file); 
+            fputc(pixel_y, file);
+            fputc(pixel_x, file);
+        }
+    }
+
+    fclose(file);
+}
+
+void saveImageGPU(int width, int height, float3* image, char filename[256]) {
+    int widthInBytes = width * BYTES_PER_PIXEL;
+
+    int paddingSize = (4 - (widthInBytes) % 4) % 4;
+
+    int stride = (widthInBytes) + paddingSize;
+
+    FILE* file = fopen(filename, "wb");
+
+    unsigned char* fileHeader = createBitmapFileHeader(height, stride);
+    fwrite(fileHeader, 1, FILE_HEADER_SIZE, file);
+
+    unsigned char* infoHeader = createBitmapInfoHeader(height, width);
+    fwrite(infoHeader, 1, INFO_HEADER_SIZE, file);
+
+    for (int w = 0; w < width; w++) {
+        for (int h = height - 1; h > -1; h--) {
+            double3 pixel = {image[h * height + w].x * 255., image[h * height + w].y * 255., image[h * height + w].z * 255.};
             char pixel_x = (char)((pixel.x > 255.0f) ? 255.0f :
                                 (pixel.x < 0.0f)   ? 0.0f :
                                 pixel.x);
@@ -157,7 +195,6 @@ __host__ __device__ float3 trace_ray(float3 O, float3 D, float3 position, float 
     float t = intersect_sphere(O, D, position, radius);
     if (t == INFINITY) return (float3){INFINITY, INFINITY, INFINITY}; // means no intersection
 
-
     float3 M = {O.x + D.x*t, O.y + D.y*t, O.z + D.z*t};
 
     float3 N = normalize(sub_float3(M, position));
@@ -208,7 +245,7 @@ float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position,
 
 __global__ void gpu_compute(int width, int height, float3 O, float3 Q, float3 position, float radius, float3 L, 
             float ambient, float diffuse, float3 color, float specular_c, int specular_k, float3 color_light, 
-            double step, float3 **img) {
+            double step, float3 *img) {
     const int x = threadIdx.x + blockDim.x * blockIdx.x;
     const int y = threadIdx.y + blockDim.y * blockIdx.y;
 
@@ -226,12 +263,12 @@ __global__ void gpu_compute(int width, int height, float3 O, float3 Q, float3 po
         col.z = col.z > 1 ? 1 : col.z < 0 ? 0 : col.z; 
 
     }
-
-    img[height - y - 1][x] = col;
+    img[height*(height - x - 1) + y] = col;
 }
 
 int main() {
-    int width = 400, height = 400;
+    printf("Block Size: %d\n", BLOCK_SIZE*BLOCK_SIZE);
+    int width = 4000, height = 4000;
 
     // sphere properties
     float3 position = {0., 0., 1.};
@@ -268,35 +305,17 @@ int main() {
                       ((height + (BLOCK_SIZE - 1)) / BLOCK_SIZE));                       
     dim3 block(BLOCK_SIZE, BLOCK_SIZE);
 
-    float3 **d_img_gpu;
-    cudaMalloc((void**)&d_img_gpu, height * sizeof(float3*));
-
-    float3* img_gpu_host[height];
-    for(int i=0; i<height; i++)
-        cudaMalloc( (void**)&img_gpu_host[i], width*sizeof(float3));
-
-    cudaMemcpy(
-        d_img_gpu, 
-        img_gpu_host,
-        sizeof(float3*)*height, cudaMemcpyHostToDevice);
+    float3 *d_img_gpu;
+    cudaMalloc((void**)&d_img_gpu, height * width * sizeof(float3));
+    float3* img_gpu = (float3*)malloc(height*width*sizeof(float3));
 
     iStart = cpuSecond();
-
     printf("Computing on GPU...\n");
     gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step, d_img_gpu);
     cudaDeviceSynchronize();
-
     double iGPUElaps = cpuSecond() - iStart;
 
-    float3** img_gpu = (float3**)malloc(height*sizeof(float3*));
-    for(int i=0; i<height; i++) {
-        float3* hostPointer = (float3*)malloc(width*sizeof(float3)); 
-
-        float3* devicePointer = img_gpu_host[i];
-
-        cudaMemcpy(hostPointer, devicePointer, sizeof(float3)*width, cudaMemcpyDeviceToHost);
-        img_gpu[i] = hostPointer;
-    }
+    cudaMemcpy(img_gpu, d_img_gpu, sizeof(float3)*width*height, cudaMemcpyDeviceToHost);
 
     double iGPUMemElaps = cpuSecond() - iStartMem;
 
@@ -307,12 +326,13 @@ int main() {
     int cnt = 0;
     for (int h = 0; h < height; h++) {
         for (int w = 0; w < width; w++) {
-            if (abs(img_cpu[h][w].x - img_gpu[h][w].x) < 0.0001 &&
-                abs(img_cpu[h][w].y - img_gpu[h][w].y) < 0.0001 &&
-                abs(img_cpu[h][w].z - img_gpu[h][w].z) < 0.0001)
+            if (abs(img_cpu[h][w].x - img_gpu[h * height + w].x) < 0.0001 &&
+                abs(img_cpu[h][w].y - img_gpu[h * height + w].y) < 0.0001 &&
+                abs(img_cpu[h][w].z - img_gpu[h * height + w].z) < 0.0001)
                     ++cnt;
         }
     }
+
 
     if (cnt == height*width) printf("Comparing the output for each implementation... Correct!\n\n"); 
     else printf("Comparing the output for each implementation... Incorrect :(\n\n");
@@ -323,20 +343,16 @@ int main() {
     char cpu_filename[256] = "images/raytracing_cpu.bmp";
     char gpu_filename[256] = "images/raytracing_gpu.bmp";
 
-    saveImage(width, height, img_cpu, cpu_filename);
-    saveImage(width, height, img_gpu, gpu_filename);
+    saveImageCPU(width, height, img_cpu, cpu_filename);
+    saveImageGPU(width, height, img_gpu, gpu_filename);
 
     printf("Done!\n");
 
     cudaFree(d_img_gpu);
-    for(int i=0; i<height; i++)
-        cudaFree(img_gpu_host[i]);
-
-    for(int i=0; i<height; i++) free(img_gpu[i]); 
-    free(img_gpu);
 
     for(int i=0; i<height; i++) free(img_cpu[i]); 
     free(img_cpu);
+    free(img_gpu);
 
 
     return 0;

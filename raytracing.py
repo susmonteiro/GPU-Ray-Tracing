@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-w, h = 5, 5  # Size of the screen in pixels.
+w, h = 400, 400  # Size of the screen in pixels.
 def normalize(x):
     # This function normalizes a vector.
     x /= np.linalg.norm(x)
