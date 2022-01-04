@@ -87,7 +87,7 @@ unsigned char* createBitmapInfoHeader (int height, int width)
 }
 
 
-void saveImageCPU(int width, int height, float3** image, char filename[256]) {
+void saveImage(int width, int height, float3** image, char filename[256]) {
     int widthInBytes = width * BYTES_PER_PIXEL;
 
     int paddingSize = (4 - (widthInBytes) % 4) % 4;
@@ -105,43 +105,6 @@ void saveImageCPU(int width, int height, float3** image, char filename[256]) {
     for (int w = 0; w < width; w++) {
         for (int h = height - 1; h > -1; h--) {
             double3 pixel = {image[h][w].x * 255., image[h][w].y * 255., image[h][w].z * 255.};
-            char pixel_x = (char)((pixel.x > 255.0f) ? 255.0f :
-                                (pixel.x < 0.0f)   ? 0.0f :
-                                pixel.x);
-            char pixel_y = (char)((pixel.y > 255.0f) ? 255.0f :
-                                (pixel.y < 0.0f)   ? 0.0f :
-                                pixel.y);
-            char pixel_z = (char)((pixel.z > 255.0f) ? 255.0f :
-                                (pixel.z < 0.0f)   ? 0.0f :
-                                pixel.z);
-            
-            fputc(pixel_z, file); 
-            fputc(pixel_y, file);
-            fputc(pixel_x, file);
-        }
-    }
-
-    fclose(file);
-}
-
-void saveImageGPU(int width, int height, float3* image, char filename[256]) {
-    int widthInBytes = width * BYTES_PER_PIXEL;
-
-    int paddingSize = (4 - (widthInBytes) % 4) % 4;
-
-    int stride = (widthInBytes) + paddingSize;
-
-    FILE* file = fopen(filename, "wb");
-
-    unsigned char* fileHeader = createBitmapFileHeader(height, stride);
-    fwrite(fileHeader, 1, FILE_HEADER_SIZE, file);
-
-    unsigned char* infoHeader = createBitmapInfoHeader(height, width);
-    fwrite(infoHeader, 1, INFO_HEADER_SIZE, file);
-
-    for (int w = 0; w < width; w++) {
-        for (int h = height - 1; h > -1; h--) {
-            double3 pixel = {image[h * height + w].x * 255., image[h * height + w].y * 255., image[h * height + w].z * 255.};
             char pixel_x = (char)((pixel.x > 255.0f) ? 255.0f :
                                 (pixel.x < 0.0f)   ? 0.0f :
                                 pixel.x);
@@ -296,23 +259,23 @@ int main() {
     float3** img_cpu = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step);
     
     double iCPUElaps = cpuSecond() - iStart;
-    printf("Time elapsed CPU: %f\n\n", iCPUElaps);
+    //printf("Time elapsed CPU: %f\n\n", iCPUElaps);
 
     // compute in gpu
+    double iStartMem = cpuSecond();
+
     dim3 grid(((width  + (BLOCK_SIZE - 1)) / BLOCK_SIZE),
                       ((height + (BLOCK_SIZE - 1)) / BLOCK_SIZE));                       
     dim3 block(BLOCK_SIZE, BLOCK_SIZE);
 
-    double iStartMem = cpuSecond();
-
     float3 *d_img_gpu;
-    cudaMalloc((void**)&d_img_gpu, height * width * sizeof(float3));
+    cudaMallocHost((void**)&d_img_gpu, height * width * sizeof(float3));
     float3* img_gpu = (float3*)malloc(height*width*sizeof(float3));
 
     iStart = cpuSecond();
     printf("Computing on GPU...\n");
     gpu_compute<<<grid, block>>>(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step, d_img_gpu);
-    cudaDeviceSynchronize();
+
     double iGPUElaps = cpuSecond() - iStart;
 
     cudaMemcpy(img_gpu, d_img_gpu, sizeof(float3)*width*height, cudaMemcpyDeviceToHost);
@@ -321,7 +284,6 @@ int main() {
 
     printf("Time elapsed GPU (not counting data transfer time): %f\n", iGPUElaps);
     printf("Time elapsed GPU (counting data transfer time):     %f\n\n", iGPUMemElaps);
-
 
     int cnt = 0;
     for (int h = 0; h < height; h++) {
@@ -343,16 +305,15 @@ int main() {
     char cpu_filename[256] = "images/raytracing_cpu.bmp";
     char gpu_filename[256] = "images/raytracing_gpu.bmp";
 
-    saveImageCPU(width, height, img_cpu, cpu_filename);
-    saveImageGPU(width, height, img_gpu, gpu_filename);
+    saveImage(width, height, img_cpu, cpu_filename);
 
     printf("Done!\n");
 
-    cudaFree(d_img_gpu);
+    cudaFreeHost(d_img_gpu);
+    free(img_gpu);
 
     for(int i=0; i<height; i++) free(img_cpu[i]); 
     free(img_cpu);
-    free(img_gpu);
 
 
     return 0;

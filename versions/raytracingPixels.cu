@@ -6,6 +6,8 @@
 
 #define BLOCK_SIZE 8
 
+#define NUM_PIXELS 32
+
 #define HEADER_SIZE 138
 #define FILE_HEADER_SIZE 14
 #define INFO_HEADER_SIZE 40
@@ -246,24 +248,31 @@ float3** cpu_compute(int width, int height, float3 O, float3 Q, float3 position,
 __global__ void gpu_compute(int width, int height, float3 O, float3 Q, float3 position, float radius, float3 L, 
             float ambient, float diffuse, float3 color, float specular_c, int specular_k, float3 color_light, 
             double step, float3 *img) {
-    const int x = threadIdx.x + blockDim.x * blockIdx.x;
-    const int y = threadIdx.y + blockDim.y * blockIdx.y;
+    const int x = (threadIdx.x + blockDim.x * blockIdx.x) * NUM_PIXELS - 1;
+    const int y = (threadIdx.y + blockDim.y * blockIdx.y) * NUM_PIXELS - 1;
 
-    if (!(x >= 0 && x < width && y >= 0 && y < height)) return;
+    for (int iterx = 0; iterx < NUM_PIXELS; iterx++) {
+        int w = x + iterx;
+        int h = y;
+        for (int itery = 0; itery < NUM_PIXELS; itery++) {
+            h = y + itery;
+            if (!(w >= 0 && w < width && h >= 0 && h < height)) continue;
 
-    Q.x = -1 + x*step, Q.y = -1+y*step;
-    float3 D = normalize(sub_float3(Q, O));
-    float3 col = trace_ray(O, D, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
+            Q.x = -1 + w*step, Q.y = -1+h*step;
+            float3 D = normalize(sub_float3(Q, O));
+            float3 col = trace_ray(O, D, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light);
 
-    if (col.x == INFINITY) { 
-        col.x = 0, col.y = 0, col.z = 0;
-    } else {
-        col.x = col.x > 1 ? 1 : col.x < 0 ? 0 : col.x; 
-        col.y = col.y > 1 ? 1 : col.y < 0 ? 0 : col.y; 
-        col.z = col.z > 1 ? 1 : col.z < 0 ? 0 : col.z; 
+            if (col.x == INFINITY) { 
+                col.x = 0, col.y = 0, col.z = 0;
+            } else {
+                col.x = col.x > 1 ? 1 : col.x < 0 ? 0 : col.x; 
+                col.y = col.y > 1 ? 1 : col.y < 0 ? 0 : col.y; 
+                col.z = col.z > 1 ? 1 : col.z < 0 ? 0 : col.z; 
 
+            }
+            img[height*(height - w - 1) + h] = col;
+        }
     }
-    img[height*(height - x - 1) + y] = col;
 }
 
 int main() {
@@ -299,8 +308,8 @@ int main() {
     printf("Time elapsed CPU: %f\n\n", iCPUElaps);
 
     // compute in gpu
-    dim3 grid(((width  + (BLOCK_SIZE - 1)) / BLOCK_SIZE),
-                      ((height + (BLOCK_SIZE - 1)) / BLOCK_SIZE));                       
+    dim3 grid((((width  + (BLOCK_SIZE - 1))/NUM_PIXELS) / BLOCK_SIZE) + 1,
+                      (((height + (BLOCK_SIZE - 1))/NUM_PIXELS) / BLOCK_SIZE) + 1);                       
     dim3 block(BLOCK_SIZE, BLOCK_SIZE);
 
     double iStartMem = cpuSecond();
