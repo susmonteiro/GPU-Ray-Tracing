@@ -230,7 +230,6 @@ __global__ void gpu_compute(int width, int height, float3 O, float3 Q, float3 po
 }
 
 int main() {
-    printf("Block Size: %d\n", BLOCK_SIZE*BLOCK_SIZE);
     int width = 4000, height = 4000;
 
     // sphere properties
@@ -259,7 +258,7 @@ int main() {
     float3** img_cpu = cpu_compute(width, height, O, Q, position, radius, L, ambient, diffuse, color, specular_c, specular_k, color_light, step);
     
     double iCPUElaps = cpuSecond() - iStart;
-    //printf("Time elapsed CPU: %f\n\n", iCPUElaps);
+    printf("Time elapsed CPU: %f\n\n", iCPUElaps);
 
     // compute in gpu
     double iStartMem = cpuSecond();
@@ -300,14 +299,12 @@ int main() {
     else printf("Comparing the output for each implementation... Incorrect :(\n\n");
 
 
-    printf("Printing image...\n");
+    // printf("Printing image...\n");
 
-    char cpu_filename[256] = "images/raytracing_cpu.bmp";
-    char gpu_filename[256] = "images/raytracing_gpu.bmp";
+    // char cpu_filename[256] = "images/raytracing_cpu.bmp";
+    // char gpu_filename[256] = "images/raytracing_gpu.bmp";
 
-    saveImage(width, height, img_cpu, cpu_filename);
-
-    printf("Done!\n");
+    // saveImage(width, height, img_cpu, cpu_filename);
 
     cudaFreeHost(d_img_gpu);
     free(img_gpu);

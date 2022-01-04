@@ -267,7 +267,6 @@ __global__ void gpu_compute(int width, int height, float3 O, float3 Q, float3 po
 }
 
 int main() {
-    printf("Block Size: %d\n", BLOCK_SIZE*BLOCK_SIZE);
     int width = 4000, height = 4000;
 
     // sphere properties
@@ -345,8 +344,6 @@ int main() {
 
     saveImageCPU(width, height, img_cpu, cpu_filename);
     saveImageGPU(width, height, img_gpu, gpu_filename);
-
-    printf("Done!\n");
 
     cudaFree(d_img_gpu);
 
